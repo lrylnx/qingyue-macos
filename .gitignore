@@ -1,0 +1,5 @@
+.DS_Store
+build/
+轻阅.app/
+# 含真实业务数据的截图，只留在本机，不进仓库
+screenshots-private/
