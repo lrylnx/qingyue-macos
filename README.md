@@ -1,6 +1,6 @@
 # 轻阅
 
-一个只用来**看** docx / xlsx / pptx 的 macOS 小应用。不装 WPS、不装 Office、不装 LibreOffice —— 所有解析都是自己按 OOXML 规范手写的，应用本体 1.8 MB。
+一个只用来**看**的 macOS 小应用：docx / xlsx / pptx，以及老式的 doc / xls / ppt 和 WPS 的 wps / et / dps。不装 WPS、不装 Office、不装 LibreOffice —— 所有解析都是自己按规范手写的（OOXML 按 ECMA-376，老格式按 BIFF8 / MS-DOC / PPT 记录格式），应用本体 2.1 MB。
 
 定位是查看器：打开就能正确显示，需要的时候也能改两个字、改一个数。
 
