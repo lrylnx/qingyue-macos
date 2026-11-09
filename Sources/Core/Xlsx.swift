@@ -19,6 +19,16 @@ struct CellKey: Hashable {
     let col: Int      // 1-based
 }
 
+/// 表格来源：xlsx 和老式 xls 都能交出一张渲染好的网格
+protocol SheetSource {
+    var sheets: [SheetRef] { get }
+    func drawSheet(_ index: Int) -> XlsxWorkbook.Rendered
+}
+
+extension XlsxWorkbook: SheetSource {
+    func drawSheet(_ index: Int) -> Rendered { render(sheetIndex: index) }
+}
+
 final class XlsxWorkbook {
     let archive: ZipArchive
     private(set) var sheets: [SheetRef] = []

@@ -11,14 +11,49 @@ let inPath = args[1]
 let outPath = args[2]
 let sheetIdx = args.count > 3 ? (Int(args[3]) ?? 0) : 0
 let url = URL(fileURLWithPath: inPath)
+let raw = (try? Data(contentsOf: url)) ?? Data()
+let container = DocKind.container(of: raw)
+var resolved: DocKind? = DocKind.from(url)
+if container == .cfb { resolved = DocKind.legacyKind(raw) ?? resolved }
 
-guard let kind = DocKind.from(url) else {
+guard let kind = resolved else {
     FileHandle.standardError.write("不支持的格式\n".data(using: .utf8)!)
     exit(3)
 }
 
 var html = ""
 let t0 = Date()
+
+if container == .cfb {
+    switch kind {
+    case .sheet:
+        guard let b = XlsWorkbook(data: raw, path: inPath) else {
+            FileHandle.standardError.write("xls 打开失败\n".data(using: .utf8)!)
+            exit(4)
+        }
+        let r = b.drawSheet(sheetIdx)
+        html = Pages.sheet(b, sheetIndex: sheetIdx, name: url.lastPathComponent)
+        print("老式 xls：工作表 \(b.sheets.map(\.name))，\(r.rowCount) 行 × \(r.colCount) 列，截断=\(r.truncated)")
+    case .doc:
+        guard let d = LegacyDoc(data: [UInt8](raw)) else {
+            FileHandle.standardError.write("doc 打开失败\n".data(using: .utf8)!)
+            exit(4)
+        }
+        html = Pages.legacyDoc(d, name: url.lastPathComponent)
+        print("老式 doc：正文 \(d.html.utf8.count) 字节 HTML，默认字号 \(d.defaultBodySize.map { fmt($0) } ?? "-")pt")
+    case .ppt:
+        guard let p = LegacyPpt(data: [UInt8](raw)) else {
+            FileHandle.standardError.write("ppt 打开失败\n".data(using: .utf8)!)
+            exit(4)
+        }
+        html = Pages.legacyPpt(p, name: url.lastPathComponent)
+        print("老式 ppt：\(p.slideTexts.count) 页，画布 \(fmt(p.slideWidthPt))×\(fmt(p.slideHeightPt))pt")
+        print("每页字数: \(p.slideTexts.map { $0.joined().count })")
+    }
+    try html.write(toFile: outPath, atomically: true, encoding: .utf8)
+    print("✓ \(outPath)  \(html.utf8.count / 1024) KB")
+    exit(0)
+}
 
 switch kind {
 case .doc:

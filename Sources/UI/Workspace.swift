@@ -39,7 +39,9 @@ final class Workspace: ObservableObject {
     @Published var commandToken = 0
 
     private var doc: DocxDocument?
-    private var book: XlsxWorkbook?
+    private var legacyDoc: LegacyDoc?
+    private var legacyPpt: LegacyPpt?
+    private var book: (any SheetSource)?
     private var deck: PptxDocument?
     private var pendingData: Data?
 
@@ -61,8 +63,18 @@ final class Workspace: ObservableObject {
     // MARK: 打开
 
     func open(_ url: URL) {
-        guard let k = DocKind.from(url) else {
-            lastError = "不支持这个格式：.\(url.pathExtension)\n目前只支持 docx / xlsx / pptx。"
+        let data = (try? Data(contentsOf: url)) ?? Data()
+        let container = DocKind.container(of: data)
+
+        // 容器优先：字节说了算，后缀只是提示。改过后缀的文件也能打开。
+        var resolved: DocKind? = DocKind.from(url)
+        if container == .cfb {
+            resolved = DocKind.legacyKind(data) ?? resolved
+        } else if container == .unknown {
+            resolved = nil
+        }
+        guard let k = resolved else {
+            lastError = "不支持这个格式：.\(url.pathExtension)\n支持 docx / xlsx / pptx，以及老式 doc / xls / ppt（含 WPS 的 wps / et / dps）。"
             return
         }
         isLoading = true
@@ -80,6 +92,38 @@ final class Workspace: ObservableObject {
         slideCount = 0
         currentSheet = 0
         editingEnabled = false
+
+        if container == .cfb {
+            switch k {
+            case .sheet:
+                guard let b = XlsWorkbook(data: data, path: url.path) else {
+                    fail("这个 xls 打不开，可能已损坏或加了密码。")
+                    return
+                }
+                book = b
+                sheets = b.sheets
+                renderSheet(0)
+            case .doc:
+                guard let d = LegacyDoc(data: [UInt8](data)) else {
+                    fail("这个 doc 打不开，可能已损坏或加了密码。")
+                    return
+                }
+                legacyDoc = d
+                html = Pages.legacyDoc(d, name: url.lastPathComponent)
+            case .ppt:
+                guard let p = LegacyPpt(data: [UInt8](data)) else {
+                    fail("这个 ppt 打不开，可能已损坏或加了密码。")
+                    return
+                }
+                legacyPpt = p
+                slideCount = p.slideTexts.count
+                slideTitles = p.slideTitles
+                html = Pages.legacyPpt(p, name: url.lastPathComponent)
+            }
+            loadVersion += 1
+            statusMessage = "老格式（只读）"
+            return
+        }
 
         switch k {
         case .doc:
@@ -112,6 +156,11 @@ final class Workspace: ObservableObject {
         statusMessage = ""
     }
 
+    /// 老式二进制文件靠**里面的流名**判断类型，不看后缀
+    private static func legacyKind(_ data: Data) -> DocKind? {
+        DocKind.legacyKind(data)
+    }
+
     private func fail(_ msg: String) {
         lastError = msg
         html = simplePage(msg)
@@ -134,7 +183,7 @@ final class Workspace: ObservableObject {
     func renderSheet(_ index: Int) {
         guard let b = book else { return }
         currentSheet = index
-        let r = b.render(sheetIndex: index)
+        let r = b.drawSheet(index)
         sheetRows = r.rowCount
         sheetCols = r.colCount
         html = Pages.sheet(b, sheetIndex: index, name: displayName)
@@ -154,7 +203,9 @@ final class Workspace: ObservableObject {
     }
 
     func applyCellEdit(row: Int, col: Int, text: String) -> Bool {
-        guard let b = book, let data = b.applyCell(sheet: currentSheet, row: row, col: col, text: text) else {
+        // 老式 .xls 是只读的：写回要重排整条记录流和 FAT 链，没做
+        guard let b = book as? XlsxWorkbook,
+              let data = b.applyCell(sheet: currentSheet, row: row, col: col, text: text) else {
             return false
         }
         pendingData = data
@@ -228,12 +279,13 @@ final class Workspace: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        let exts = ["docx", "docm", "dotx", "xlsx", "xlsm", "xltx", "pptx", "pptm", "potx"]
+        let exts = ["docx", "docm", "dotx", "xlsx", "xlsm", "xltx", "pptx", "pptm", "potx",
+                    "doc", "dot", "xls", "xlt", "ppt", "pot", "pps", "wps", "et", "dps"]
         panel.allowedContentTypes = exts.compactMap { UTType(filenameExtension: $0) }
         if panel.allowedContentTypes.isEmpty {
             panel.allowedFileTypes = exts
         }
-        panel.message = "选择 docx / xlsx / pptx 文件"
+        panel.message = "选择 docx / xlsx / pptx，或老式 doc / xls / ppt、WPS 的 wps / et / dps"
         panel.prompt = "打开"
         if panel.runModal() == .OK, let u = panel.url { open(u) }
     }
@@ -249,7 +301,7 @@ final class Workspace: ObservableObject {
     }
 
     func closeDocument() {
-        doc = nil; book = nil; deck = nil
+        doc = nil; book = nil; deck = nil; legacyDoc = nil; legacyPpt = nil
         url = nil; kind = nil
         html = ""; outline = []; sheets = []; slideTitles = []
         pendingData = nil; isDirty = false

@@ -73,8 +73,12 @@ for arch in $ARCHS; do
         -o "build/obj/zipshim_${arch}.o"
 
     echo "「编译 Swift ($arch)」"
+    # -Xfrontend -disable-sandbox：本机 sandbox-exec 套不上（sandbox_apply: Operation not
+    # permitted），而 SwiftUI 的 @State 等已是宏、要靠 swift-plugin-server 起进程，一旦被
+    # 沙箱拦下就报 "StateMacro could not be found ... produced malformed response"。
     xcrun swiftc \
         "$OPT" \
+        -Xfrontend -disable-sandbox \
         -parse-as-library \
         -sdk "$SDK" \
         -target "${arch}-apple-macos14.0" \
@@ -100,7 +104,7 @@ fi
 # 会得出"改完没效果"的错误结论。顶层代码文件不能加 -parse-as-library。
 echo "▸ 编译 CLI (dump)"
 # 只编 Core：UI 层里有 @main，和 Tools/main.swift 的顶层代码会冲突。
-xcrun swiftc -O -sdk "$SDK" -target arm64-apple-macos14.0 -lz \
+xcrun swiftc -O -Xfrontend -disable-sandbox -sdk "$SDK" -target arm64-apple-macos14.0 -lz \
     "build/obj/zipshim_arm64.o" \
     Sources/Core/*.swift Tools/main.swift \
     -o build/dump 2>/dev/null || echo "  (CLI 编译失败，不影响 App)"

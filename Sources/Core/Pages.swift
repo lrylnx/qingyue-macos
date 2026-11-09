@@ -120,10 +120,29 @@ enum Pages {
         return HTMLShell.page(.doc, body: body, extraCSS: css, extraJS: js, topBar: bar)
     }
 
+    /// 老式 .doc / .wps：只读。用同一套纸张样式，但不接编辑（二进制写回没做）
+    static func legacyDoc(_ d: LegacyDoc, name: String) -> String {
+        let paperWidth = max(520, d.pageWidthPt * 4.0 / 3.0)
+        let padX = max(28, d.marginPt * 4.0 / 3.0)
+        let size = d.defaultBodySize.map { "body{font-size:\(fmt($0))pt}" } ?? ""
+
+        let css = #"""
+        .paper{max-width:\#(fmt(paperWidth))px; padding:52px \#(fmt(padX))px 72px}
+        \#(size)
+        """#
+
+        let bar = HTMLShell.topBar(title: name, mode: .doc, trailing: "")
+        let body = """
+<div class="paper-wrap"><div class="paper" id="root">\(d.html)</div></div>
+"""
+        return HTMLShell.page(.doc, body: body, extraCSS: css,
+                              extraJS: HTMLShell.searchJS, topBar: bar)
+    }
+
     // MARK: - Excel
 
-    static func sheet(_ wb: XlsxWorkbook, sheetIndex: Int, name: String) -> String {
-        let r = wb.render(sheetIndex: sheetIndex)
+    static func sheet(_ wb: any SheetSource, sheetIndex: Int, name: String) -> String {
+        let r = wb.drawSheet(sheetIndex)
         let sheetName = wb.sheets[safe: sheetIndex]?.name ?? "Sheet"
 
         var notice = ""
@@ -296,7 +315,36 @@ enum Pages {
     // MARK: - PowerPoint
 
     static func ppt(_ p: PptxDocument, name: String) -> String {
-        let html = p.renderAll()
+        pptShell(html: p.renderAll(), count: p.slidePaths.count, name: name)
+    }
+
+    /// 老式 .ppt / .dps：文本视图。二进制版把版式（自选图形坐标）放在另一套 Escher
+    /// 记录里，这里只取每页的文字，按页居中排版 —— 内容对得上，版式不还原。
+    static func legacyPpt(_ p: LegacyPpt, name: String) -> String {
+        let w = p.slideWidthPt * 4.0 / 3.0
+        let h = p.slideHeightPt * 4.0 / 3.0
+        let base = max(15.0, h * 0.042)
+
+        var html = ""
+        for texts in p.slideTexts {
+            html += "<div class=\"slide\" style=\"width:\(fmt(w))px;height:\(fmt(h))px\">"
+            html += "<div class=\"sh\" style=\"left:6%;top:9%;width:88%;height:82%\">"
+            html += "<div class=\"tx\" style=\"justify-content:center;text-align:center;padding:0 3%\">"
+            if texts.isEmpty {
+                html += "<p style=\"font-size:\(fmt(base))px;color:#9AA0A6\">（这一页没有文字）</p>"
+            }
+            for (j, t) in texts.enumerated() {
+                let size = j == 0 ? base * 1.75 : base
+                let weight = j == 0 ? "font-weight:700;" : ""
+                let mt = j == 0 ? "" : "margin-top:\(fmt(base * 0.45))px;"
+                html += "<p style=\"\(weight)\(mt)font-size:\(fmt(size))px;margin-bottom:0;text-align:center\">\(XMLText.escape(t))</p>"
+            }
+            html += "</div></div></div>"
+        }
+        return pptShell(html: html, count: p.slideTexts.count, name: name)
+    }
+
+    private static func pptShell(html: String, count: Int, name: String) -> String {
         let bar = HTMLShell.topBar(title: name, mode: .ppt, trailing: """
           <span class="chip" id="btnFit">适应宽度</span>
         """)
@@ -305,7 +353,7 @@ enum Pages {
 <div class="stage" id="root">\(html)</div>
 <div class="pnum">
   <button id="pvPrev" title="上一页">‹</button>
-  <input id="pvNum" value="1"><span>/ \(p.slidePaths.count)</span>
+  <input id="pvNum" value="1"><span>/ \(count)</span>
   <button id="pvNext" title="下一页">›</button>
 </div>
 """
